@@ -1,0 +1,12 @@
+# ============================================================
+# sOFIa - Eje Tecnico SC
+# Configuracion MODERNA: API de Tasks (HandLandmarker)
+# Funciona en Python 3.9 - 3.12. NO trae mp.solutions.
+# ============================================================
+#
+#     pip install -r requirements-tasks.txt
+#     python app.py --backend tasks
+
+mediapipe>=1.0.1
+numpy>=1.26
+opencv-python==4.10.0.84

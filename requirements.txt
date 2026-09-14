@@ -1,0 +1,38 @@
+# ============================================================
+# sOFIa - Eje Tecnico SC
+# Configuracion LEGACY: conserva mp.solutions.hands
+# ============================================================
+#
+# REQUIERE PYTHON 3.11  (3.8 - 3.11 funcionan; 3.12+ NO tiene
+# wheel de mediapipe 0.10.21, y 3.13 no tiene wheel de ninguna
+# version de mediapipe).
+#
+# Verifica antes de instalar:
+#     python --version
+#
+# Instalacion:
+#     python -m venv .venv
+#     .venv\Scripts\activate           (Windows)
+#     source .venv/bin/activate        (Linux / macOS)
+#     pip install --upgrade pip
+#     pip install -r requirements.txt
+#     python diagnostico.py
+
+mediapipe==0.10.21
+numpy<2
+opencv-python==4.10.0.84
+
+# ------------------------------------------------------------
+# numpy<2 NO es opcional. El wheel de mediapipe 0.10.21 declara
+# "Requires-Dist: numpy<2". Con numpy 2.x la importacion truena
+# con errores de ABI que no dicen nada util.
+# ------------------------------------------------------------
+#
+# Si mas adelante se migra a la API moderna (mediapipe 1.x), el
+# codigo YA la soporta: basta cambiar estas tres lineas por
+#
+#     mediapipe>=1.0.1
+#     numpy>=1.26
+#     opencv-python==4.10.0.84
+#
+# y correr con  --backend tasks  (o dejar que auto lo detecte).
