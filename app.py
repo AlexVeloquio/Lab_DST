@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import sys
 import threading
 import time
 from collections import deque
@@ -45,10 +46,36 @@ from core.tracker import (
 from ui import overlay
 
 
-class CameraThread:
-    """Captura desacoplada. Politica: siempre el frame mas reciente."""
+def _capture_backends() -> list[int]:
+    """
+    Backend de captura segun el sistema operativo.
 
-    def __init__(self, index: int = 0, width: int = 640, height: int = 480):
+    CAP_DSHOW es EXCLUSIVO de Windows (DirectShow). En macOS o Linux pedirlo
+    hace que VideoCapture falle o tarde en abrir. En macOS lo correcto es
+    AVFoundation y en Linux V4L2. Siempre se deja CAP_ANY como ultimo recurso.
+    """
+    if sys.platform.startswith("win"):
+        nombres = ["CAP_DSHOW", "CAP_MSMF"]
+    elif sys.platform == "darwin":
+        nombres = ["CAP_AVFOUNDATION"]
+    else:
+        nombres = ["CAP_V4L2"]
+    backends = [getattr(cv2, n) for n in nombres if hasattr(cv2, n)]
+    backends.append(cv2.CAP_ANY)
+    return backends
+
+
+class CameraThread:
+    """
+    Captura desacoplada. Politica: siempre el frame mas reciente.
+
+    index puede ser un entero o "auto". Con "auto" se prueban los indices 0 a 3
+    y se usa el primero que entregue un frame de verdad: en varias Mac la camara
+    integrada no es el indice 0, y abrir el indice equivocado da una ventana
+    negra sin ningun mensaje de error.
+    """
+
+    def __init__(self, index=0, width: int = 640, height: int = 480):
         self.index, self.width, self.height = index, width, height
         self.frame: np.ndarray | None = None
         self.ok = False
@@ -61,18 +88,37 @@ class CameraThread:
         self._t.start()
         return self
 
+    def _try_open(self, idx: int):
+        for backend in _capture_backends():
+            try:
+                cap = cv2.VideoCapture(idx, backend)
+            except Exception:
+                continue
+            if cap.isOpened():
+                ok, frame = cap.read()
+                if ok and frame is not None:
+                    return cap
+            cap.release()
+        return None
+
     def _open(self) -> bool:
-        # CAP_DSHOW evita el arranque lento de MSMF en Windows.
-        cap = cv2.VideoCapture(self.index, cv2.CAP_DSHOW)
-        if not cap.isOpened():
-            cap = cv2.VideoCapture(self.index)
-        if not cap.isOpened():
-            return False
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        self._cap = cap
-        return True
+        indices = range(4) if self.index == "auto" else [int(self.index)]
+        for idx in indices:
+            cap = self._try_open(idx)
+            if cap is None:
+                continue
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+            try:
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)   # no soportado en todos
+            except Exception:
+                pass
+            if self.index == "auto":
+                print(f"[camara] usando el indice {idx}")
+            self.index = idx
+            self._cap = cap
+            return True
+        return False
 
     def _loop(self) -> None:
         while not self._stop.is_set():
@@ -103,7 +149,8 @@ class CameraThread:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="sOFIa - Eje Tecnico SC")
-    ap.add_argument("--cam", type=int, default=0)
+    ap.add_argument("--cam", default="auto",
+                    help="indice de camara, o 'auto' para buscarla sola")
     ap.add_argument("--ancho", type=int, default=640)
     ap.add_argument("--alto", type=int, default=480)
     ap.add_argument("--manos", type=int, default=2)
@@ -121,8 +168,9 @@ def main() -> None:
 
     print(f"[entorno] {backend_info()}")
 
+    cam_idx = args.cam if args.cam == "auto" else int(args.cam)
     size = (args.ancho, args.alto)
-    cam = CameraThread(args.cam, args.ancho, args.alto).start()
+    cam = CameraThread(cam_idx, args.ancho, args.alto).start()
 
     hands_tracker = HandTracker(num_hands=args.manos, image_size=size,
                                 backend=args.backend,
@@ -157,7 +205,10 @@ def main() -> None:
     frame_id = 0
 
     print("Listo. q salir | m mapeo | i ids | espacio pausa | s captura")
-    print("Si la ventana no aparece, revisa que ninguna otra app este usando la camara.")
+    print("Si la ventana no aparece, revisa que ninguna otra app use la camara.")
+    if sys.platform == "darwin":
+        print("macOS: la terminal necesita permiso en Ajustes > Privacidad y "
+              "seguridad > Camara.")
 
     try:
         while True:
@@ -209,7 +260,8 @@ def main() -> None:
                 print(f"[gesto] {event.name} conf={event.confidence:.2f} "
                       f"{event.hand} {event.payload or ''}")
                 if link:
-                    extra = (event.payload or {}).get("direccion", 0) & 0xFF
+                    # direccion viaja como int8: -1 se envia como 0xFF
+                    extra = int((event.payload or {}).get("direccion", 0)) & 0xFF
                     ok = link.send_gesture(event.name, event.confidence, extra)
                     if not ok:
                         print("[enlace] sin ACK del gesto")
@@ -231,6 +283,7 @@ def main() -> None:
                 overlay.draw_hand(frame, h, show_ids)
             if hands:
                 overlay.draw_finger_bars(frame, hands[0])
+                overlay.draw_palm_gauge(frame, hands[0])
             overlay.draw_matrix(frame, matrix)
 
             dt = time.perf_counter() - loop_t0

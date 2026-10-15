@@ -227,26 +227,95 @@ El cronograma exige 5 posturas con **al menos 3 dinámicas**. Diseñadas como
 
 | Postura | Tipo | Detección | Reacción sugerida de sOFIa |
 |---|---|---|---|
-| `PALMA_ABIERTA` | estática | apertura > 0.72, ≥4 dedos arriba, **y mano quieta** | despliega el panel completo |
-| `PUNO` | estática | apertura < 0.28, ≤1 dedo arriba, **y mano quieta** | se contrae al centro |
-| `SALUDO` | dinámica | ≥3 inversiones de velocidad horizontal en 1.2 s, amplitud ≥1.1 palmas | devuelve una ola |
-| `BARRIDO` | dinámica | desplazamiento neto ≥1.6 palmas con monotonía >0.8 | onda viajera en la dirección |
-| `PULSO` | dinámica | abrir → cerrar → abrir en <1.1 s (máquina de 3 estados) | latido de toda la matriz |
+| `SALUDO` | dinámica | ≥3 oscilaciones laterales de ≥0.45 palmas cada una, amplitud total ≥1.2 palmas | devuelve una ola |
+| `PULSO` | dinámica | abrir → cerrar → abrir en <1.4 s (máquina de 3 estados) | latido de toda la matriz |
+| `GIRO` | dinámica | la normal de la palma cruza la banda de canto y cambia de signo en <1.5 s | la matriz espeja su patrón |
+| `PUNO` | estática | apertura <0.25, **cero** dedos arriba, mano quieta 400 ms | se contrae al centro |
+| `PAZ` | estática | índice y medio >0.6, anular y meñique <0.4, mano quieta 400 ms | patrón en V |
 
-### Por qué "y mano quieta" no es un detalle
+### El principio: cada postura en su propio eje de señal
 
-Un **saludo también es, frame a frame, una mano abierta**. Sin el requisito de
-quietud, `PALMA_ABIERTA` dispara a los 350 ms y el saludo nunca alcanza a
-completar su ventana de 1.2 s: el gesto dinámico es literalmente inalcanzable.
-Esto salió en las pruebas automatizadas (`tests/test_offline.py`) y es el tipo
-de hallazgo que conviene documentar.
+Dos posturas solo pueden confundirse si compiten por la misma medida. El
+catálogo está armado para que cada una viva en un eje distinto:
 
-La regla que resuelve el traslape: **quieto = estático, en movimiento =
-dinámico**. Medido en palmas, no en píxeles.
+| Postura | Eje que usa |
+|---|---|
+| `SALUDO` | desplazamiento lateral del centro |
+| `PULSO` | apertura global variando en el tiempo |
+| `GIRO` | normal de la palma cruzando de signo |
+| `PUNO` | apertura global baja, sostenida |
+| `PAZ` | **patrón** de dedos (cuáles, no cuántos), sostenido |
 
-Distinguir `SALUDO` de `BARRIDO` usa la misma señal con criterios opuestos:
-saludo = muchas inversiones; barrido = cero inversiones (monotonía alta). Son
-la misma familia de señal separada por una métrica de forma.
+`PAZ` es la pieza que cierra el diseño. Usa el patrón de dedos, un eje que
+ninguna otra postura toca, y su apertura ronda 0.43 — por debajo del umbral de
+0.55 que exige `SALUDO`, así que es imposible que una se lea como la otra.
+
+La prueba `test_separacion_posturas` verifica exactamente esto: cada secuencia
+activa **solo** su detector, ninguno más.
+
+### Qué se quitó, y por qué
+
+| Postura retirada | Motivo |
+|---|---|
+| `PALMA_ABIERTA` | Competía de frente con `SALUDO`: una mano saludando **es** una mano abierta frame a frame. Peor aún, una palma quieta caía en el detector de saludo cuando el jitter de landmarks alcanzaba para simular oscilaciones. |
+| `BARRIDO` | Usaba exactamente la misma señal que `SALUDO` (desplazamiento lateral) con el criterio opuesto. Mantener ambas obligaba a umbrales tan finos que cualquier movimiento intermedio caía en tierra de nadie. |
+
+### El bug del saludo fantasma
+
+La versión anterior contaba cambios de signo de la velocidad horizontal. Eso
+falla porque el jitter de landmarks produce decenas de cambios de signo por
+segundo, y una oscilación de 0.02 palmas contaba igual que un saludo real.
+
+La versión final usa un **zigzag con amplitud mínima**: una oscilación solo
+cuenta si el recorrido desde el último extremo supera 0.45 palmas. Una mano
+quieta produce **cero** oscilaciones por mucho que tiemble, porque nunca se
+aleja tanto de su extremo. La serie además se suaviza con una media móvil corta
+antes de analizarla.
+
+`test_palma_quieta_no_es_saludo` lo verifica con 6.6 s de mano inmóvil bajo
+ruido gaussiano de 1.5 px y de 4 px, más una deriva lenta en línea recta:
+cero disparos en los tres casos.
+
+### GIRO: por qué necesita una banda muerta ancha
+
+`GIRO` usa `palm_normal`, la componente z de la normal de la palma, continua en
+[-1, +1]: vale +1 con la palma de frente, −1 con el dorso y ~0 con la mano de
+canto. Tres decisiones lo hacen fiable:
+
+- **Zona muerta amplia.** Solo se compromete un estado cuando `|v| > 0.50`. En
+  la banda de canto la normal es casi perpendicular al eje óptico y su *signo*
+  se vuelve ruido, brincando entre +1 y −1 entre frames consecutivos. Creerle
+  ahí produce giros fantasma sin parar.
+- **Hay que pasar por el canto.** Un volteo físico obliga a cruzar la banda. Un
+  salto directo de +1 a −1 sin cruzarla no es un giro: es un parpadeo del
+  clasificador de mano — si MediaPipe confunde izquierda con derecha en un
+  frame, la normal se invierte de golpe porque el producto cruz cambia de
+  signo. Exigir el cruce elimina ese falso positivo de raíz.
+- **El reloj mide la transición, no la espera.** `max_ms` se cuenta desde que
+  la mano *abandona* un estado comprometido, no desde que lo alcanzó. Puedes
+  tener la palma quieta diez segundos y luego voltear: lo que debe ser rápido
+  es el volteo, no la pausa previa.
+
+Se exige además la mano razonablemente abierta (`aperture > 0.40`): con el puño
+cerrado el arco de nudillos se comprime, la base canónica se vuelve inestable y
+la normal deja de significar algo.
+
+**Detalle que lo hace robusto:** el detector busca un *cambio* de signo, no una
+orientación absoluta. Eso lo vuelve inmune a que la convención de signo esté
+invertida por el `cv2.flip()` del espejo o por el etiquetado de handedness. Si
+un día la dirección reportada sale al revés, se corrige invirtiendo el signo de
+`direction`, sin tocar la lógica de detección.
+
+### Dos cambios que GIRO obligó en el resto del motor
+
+1. **"Quieta" ahora incluye "sin girar".** `HeldPosture` vigilaba desplazamiento
+   en x e y; ahora también la varianza de `palm_normal`. Una mano que está
+   volteando sigue siendo, frame a frame, una mano con el mismo patrón de
+   dedos, así que sin esto una estática dispararía a mitad del volteo.
+2. **Excepción por prioridad en el refractario.** Un gesto de mayor prioridad sí
+   puede interrumpir el refractario de uno menor, porque los 900 ms de espera
+   de una estática alcanzaban para comerse una dinámica que llegara justo
+   después. Al revés no aplica: una estática nunca interrumpe a una dinámica.
 
 ---
 
@@ -365,6 +434,12 @@ VER..PAYLOAD.
 | 0x20 | `HEARTBEAT` (cada 500 ms) | PC → ESP32 | no |
 | 0x21 | `STATUS` (telemetría) | ESP32 → PC | — |
 | 0x40 | `STOP` (paro seguro) | PC → ESP32 | sí |
+
+Códigos de gesto en el payload de `GESTURE`: `0x01` PUNO, `0x02` PAZ,
+`0x03` SALUDO, `0x04` PULSO, `0x05` GIRO. El tercer byte
+(`extra`) viaja como **entero con signo**: la PC envía −1 como `0xFF`, y el
+firmware lo lee como `int8_t`. En `GIRO` indica si la mano quedó mostrando
+palma (+1) o dorso (−1); los demás gestos lo dejan en 0.
 
 **Failsafe:** si la ESP32 pasa 1.5 s sin recibir nada, manda todos los módulos a
 reposo por su cuenta. Cubre el caso de que la PC se cuelgue, se cierre la
@@ -490,6 +565,8 @@ pedir iluminación frontal o bajar la exposición de la cámara por software.
 
 | Riesgo | Impacto | Mitigación |
 |---|---|---|
+| mediapipe 1.0.x en Mac Apple Silicon | **aborta el proceso**, no es atrapable | usar 0.10.21; guarda en `tracker.check_plataforma()` |
+| `opencv-python` + `opencv-contrib-python` juntos | cv2 impredecible, sin error de pip | un solo proveedor de cv2 |
 | Python 3.13 sin wheel de MediaPipe | bloqueante | fijar 3.11 o 3.12 desde el día 1 |
 | Copiar tutoriales con `mp.solutions` | horas perdidas | este README, sección 0 |
 | Contraluz del ventanal | detección irregular | medir temprano; iluminación frontal |

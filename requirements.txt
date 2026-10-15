@@ -1,38 +1,39 @@
 # ============================================================
 # sOFIa - Eje Tecnico SC
-# Configuracion LEGACY: conserva mp.solutions.hands
+# Configuracion recomendada: mediapipe 0.10.21 (API legacy)
 # ============================================================
 #
-# REQUIERE PYTHON 3.11  (3.8 - 3.11 funcionan; 3.12+ NO tiene
-# wheel de mediapipe 0.10.21, y 3.13 no tiene wheel de ninguna
-# version de mediapipe).
+# REQUIERE PYTHON 3.9 - 3.12.  (3.13 no tiene wheel de mediapipe.)
+# Hay wheel universal2 para Mac con Apple Silicon.
 #
-# Verifica antes de instalar:
-#     python --version
+# Por que 0.10.21 y no 1.0.1:
+#   - conserva mp.solutions.hands (la API de los tutoriales)
+#   - mediapipe 1.0.x ABORTA en Mac con Apple Silicon:
+#     "Check failed: service_ Service is unavailable" en DrishtiMetalHelper.
+#     El calculador inicializa Metal sin condicion, asi que delegate=CPU no
+#     lo evita, y es un abort() de C++ que no se puede atrapar.
 #
-# Instalacion:
-#     python -m venv .venv
-#     .venv\Scripts\activate           (Windows)
-#     source .venv/bin/activate        (Linux / macOS)
+# Instalacion desde cero:
+#     python3.11 -m venv .venv
+#     source .venv/bin/activate          (macOS / Linux)
+#     .venv\Scripts\activate             (Windows)
 #     pip install --upgrade pip
 #     pip install -r requirements.txt
 #     python diagnostico.py
 
 mediapipe==0.10.21
 numpy<2
-opencv-python==4.10.0.84
 
 # ------------------------------------------------------------
-# numpy<2 NO es opcional. El wheel de mediapipe 0.10.21 declara
-# "Requires-Dist: numpy<2". Con numpy 2.x la importacion truena
-# con errores de ABI que no dicen nada util.
+# NO agregar opencv-python aqui.
+#
+# mediapipe 0.10.x ya instala opencv-contrib-python como dependencia. Los dos
+# paquetes entregan el modulo cv2 en el MISMO directorio y se sobrescriben. pip
+# no marca error: simplemente queda un cv2 impredecible. Si ya tienes los dos:
+#
+#     pip uninstall -y opencv-python opencv-contrib-python
+#     pip install -r requirements.txt
+#
+# numpy<2 tampoco es opcional: el wheel de 0.10.21 declara "Requires-Dist:
+# numpy<2". Con numpy 2.x la importacion truena con errores de ABI.
 # ------------------------------------------------------------
-#
-# Si mas adelante se migra a la API moderna (mediapipe 1.x), el
-# codigo YA la soporta: basta cambiar estas tres lineas por
-#
-#     mediapipe>=1.0.1
-#     numpy>=1.26
-#     opencv-python==4.10.0.84
-#
-# y correr con  --backend tasks  (o dejar que auto lo detecte).

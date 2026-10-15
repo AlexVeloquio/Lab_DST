@@ -67,6 +67,12 @@ Sabes que funcionó porque el prompt cambia a `(.venv)`.
 
 ## Paso 3 — Instalar dependencias
 
+> **macOS con chip M1/M2/M3/M4:** usa `requirements.txt` (mediapipe 0.10.21).
+> La rama 1.0.x **aborta el proceso** en Apple Silicon: inicializa Metal sin
+> condición y falla con `Check failed: service_ Service is unavailable` en
+> `DrishtiMetalHelper`. Es un `abort()` de C++, ni siquiera una excepción de
+> Python. Pasar el delegado a CPU tampoco lo evita.
+
 ```bash
 pip install --upgrade pip
 pip install -r requirements.txt
@@ -172,16 +178,29 @@ Ponte a 1–2 m de la cámara, con la mano bien visible. La consola imprime
 
 | Postura | Cómo provocarla |
 |---|---|
-| `PALMA_ABIERTA` | mano abierta, dedos separados, **quieta** ~0.4 s |
-| `PUNO` | puño cerrado, **quieto** ~0.4 s |
-| `SALUDO` | mano abierta moviéndose de lado a lado, como diciendo adiós |
-| `BARRIDO` | mano abierta cruzando la pantalla de un lado al otro, sin regresar |
-| `PULSO` | abrir → cerrar → abrir, rápido (menos de 1 s completo) |
+| `PUNO` | puño bien cerrado, **quieto** ~0.4 s |
+| `PAZ` | índice y medio arriba, anular y meñique recogidos, **quieta** ~0.4 s |
+| `SALUDO` | mano abierta moviéndose de lado a lado con amplitud amplia, como diciendo adiós |
+| `PULSO` | abrir → cerrar → abrir, rápido (menos de 1.4 s completo) |
+| `GIRO` | mano abierta, voltearla de palma a dorso (o al revés) en menos de 1.5 s |
 
-**Detalle importante:** las posturas estáticas exigen que la mano esté quieta.
-Es a propósito: un saludo también es, frame a frame, una mano abierta, y sin
-ese requisito `PALMA_ABIERTA` dispararía siempre primero y el saludo nunca
-alcanzaría a completarse.
+Para `GIRO` tienes un medidor en pantalla, abajo a la izquierda: una barra
+`PALMA <-> DORSO` con una franja gris al centro. Esa franja es la **banda de
+canto**, donde el signo de la normal no es confiable y el detector se niega a
+comprometerse. Un giro válido cruza la franja completa. Si el marcador se queda
+temblando dentro de la franja, estás girando demasiado despacio o la mano está
+muy cerrada (se exige apertura > 0.40).
+
+**Detalle importante:** las posturas estáticas (`PUNO` y `PAZ`) exigen que la
+mano esté quieta, y "quieta" incluye **sin girar**. Es a propósito: una mano que
+está volteando sigue teniendo, frame a frame, el mismo patrón de dedos, así que
+sin ese filtro la estática dispararía a mitad del `GIRO`.
+
+Cada postura vive en un eje de señal distinto — `SALUDO` en el desplazamiento
+lateral, `PULSO` en la apertura, `GIRO` en la orientación de la palma, `PUNO` en
+la apertura baja sostenida y `PAZ` en el patrón de dedos — así que no deberías
+ver una leerse como otra. Si pasa, repórtalo: es un umbral mal calibrado para tu
+cámara, no un límite del diseño.
 
 Después de cada gesto hay un periodo refractario de 0.9 s durante el cual no se
 detecta otro. También es a propósito: los servos tardan en ejecutar el patrón.
@@ -270,7 +289,9 @@ latencia y FPS promedio **y percentil 5** (el promedio esconde los tirones).
 | Errores raros de ABI al importar mediapipe | numpy 2.x | `pip install "numpy<2"` |
 | Ventana negra o no abre | otra app usa la cámara | cierra Teams/Zoom, o `--cam 1` |
 | macOS: abre pero todo negro | falta permiso de cámara | Ajustes → Privacidad y seguridad → Cámara |
-| `numpy 2.x incompatible` en el diagnóstico | falso positivo en versiones viejas del script | solo aplica a mediapipe 0.10.x; con 1.x numpy 2 está bien |
+| `numpy 2.x incompatible` en el diagnóstico | falso positivo de versiones viejas del script | ya corregido; solo aplica a mediapipe 0.10.x |
+| **macOS Apple Silicon: `Check failed: service_ Service is unavailable` + stack de `DrishtiMetalHelper`** | bug de mediapipe 1.0.x, aborta el proceso | `pip install "mediapipe==0.10.21" "numpy<2"` |
+| `cv2` se comporta raro o versión inesperada | tienes `opencv-python` y `opencv-contrib-python` a la vez | `pip uninstall -y opencv-python opencv-contrib-python` y reinstala requirements |
 | FPS por debajo de 15 | modelo pesado | `--complejidad 0` y/o `--manos 1` |
 | Detecta gestos que no hiciste | umbrales flojos para tu setup | sube `up_threshold` en `features.py` o los umbrales en `gestures.py` |
 | No detecta nada a contraluz | exposición de la cámara | iluminación frontal, o baja la exposición |

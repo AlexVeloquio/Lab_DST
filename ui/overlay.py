@@ -46,6 +46,14 @@ def draw_hand(img: np.ndarray, f: HandFeatures, show_ids: bool = False) -> None:
     cv2.putText(img, f"{f.handedness} {f.code}", (wx - 30, wy + 24),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, ACCENT, 1, cv2.LINE_AA)
 
+    # Orientacion de la palma: es la señal que alimenta el gesto GIRO, asi que
+    # verla en vivo es lo que permite calibrar el umbral de la banda de canto.
+    orient = f.orientacion
+    color = {"PALMA": (90, 220, 120), "DORSO": (90, 160, 255),
+             "CANTO": (120, 120, 130)}[orient]
+    cv2.putText(img, f"{orient} {f.palm_normal:+.2f}", (wx - 30, wy + 42),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
+
 
 def draw_pose(img: np.ndarray, pose: np.ndarray) -> None:
     pts = pose[:, :2].astype(int)
@@ -53,6 +61,30 @@ def draw_pose(img: np.ndarray, pose: np.ndarray) -> None:
         cv2.line(img, tuple(pts[a]), tuple(pts[b]), (90, 90, 100), 1, cv2.LINE_AA)
     for x, y in pts:
         cv2.circle(img, (int(x), int(y)), 2, (150, 150, 160), -1, cv2.LINE_AA)
+
+
+def draw_palm_gauge(img: np.ndarray, f: HandFeatures,
+                    origin: tuple[int, int] = (12, 202), width: int = 160) -> None:
+    """
+    Barra deslizante de orientacion de palma, con la banda de canto marcada.
+
+    Sirve para calibrar el gesto GIRO: la zona gris central es donde el signo
+    de la normal no es confiable y el detector se niega a comprometerse.
+    """
+    x0, y0 = origin
+    cv2.putText(img, "PALMA <-> DORSO", (x0, y0 - 4),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.38, FG, 1, cv2.LINE_AA)
+    cv2.rectangle(img, (x0, y0), (x0 + width, y0 + 12), (60, 60, 70), -1)
+
+    # banda muerta (|v| < 0.5), donde el detector considera "de canto"
+    c = x0 + width // 2
+    half = int(width * 0.25)
+    cv2.rectangle(img, (c - half, y0), (c + half, y0 + 12), (95, 95, 105), -1)
+
+    pos = int(x0 + width * (1.0 - (f.palm_normal + 1.0) / 2.0))
+    color = {"PALMA": (90, 220, 120), "DORSO": (90, 160, 255),
+             "CANTO": (150, 150, 160)}[f.orientacion]
+    cv2.rectangle(img, (pos - 2, y0 - 2), (pos + 2, y0 + 14), color, -1)
 
 
 def draw_finger_bars(img: np.ndarray, f: HandFeatures,
@@ -72,7 +104,7 @@ def draw_finger_bars(img: np.ndarray, f: HandFeatures,
 
 
 def draw_matrix(img: np.ndarray, values: np.ndarray,
-                origin: tuple[int, int] = (12, 210), cell: int = 34) -> None:
+                origin: tuple[int, int] = (12, 240), cell: int = 34) -> None:
     """
     Previsualiza los 16 modulos como una matriz 4x4.
     Permite validar el mapeo SIN hardware conectado, que es lo que desbloquea

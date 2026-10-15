@@ -64,13 +64,18 @@ class ErrCode(IntEnum):
     ESCLAVO_SIN_RESPUESTA = 0x05
 
 
-# Codigos de gesto que viajan en el payload de GESTURE
+# Codigos de gesto que viajan en el payload de GESTURE.
+# Payload = [codigo, confianza 0-255, extra]
+#
+# El byte `extra` se interpreta como ENTERO CON SIGNO (int8) en la ESP32:
+#   GIRO   -1 quedo mostrando el DORSO, +1 quedo mostrando la PALMA
+#   los demas gestos lo dejan en 0
 GESTURE_CODES = {
-    "PALMA_ABIERTA": 0x01,
-    "PUNO": 0x02,
-    "SALUDO": 0x03,
-    "BARRIDO": 0x04,
-    "PULSO": 0x05,
+    "PUNO": 0x01,       # estatica
+    "PAZ": 0x02,        # estatica
+    "SALUDO": 0x03,     # dinamica
+    "PULSO": 0x04,      # dinamica
+    "GIRO": 0x05,       # dinamica
 }
 
 

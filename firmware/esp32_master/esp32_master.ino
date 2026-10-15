@@ -65,10 +65,30 @@ void sendFrame(uint8_t type, const uint8_t* payload, uint8_t len) {
 
 void ack(uint8_t seq) { sendFrame(MSG_ACK, &seq, 1); }
 
-void onGesture(uint8_t code, uint8_t conf, uint8_t extra) {
-  // Aqui se dispara el patron mecanico correspondiente.
-  // 0x01 PALMA  0x02 PUNO  0x03 SALUDO  0x04 BARRIDO(extra=direccion)  0x05 PULSO
-  Serial.printf("GESTO %02X conf=%u extra=%u\n", code, conf, extra);
+// Codigos de gesto. `extra` es un entero CON SIGNO (int8_t): la PC envia -1
+// como 0xFF, asi que hay que leerlo como int8_t y no como uint8_t.
+//   0x01 PUNO     (estatica)
+//   0x02 PAZ      (estatica)
+//   0x03 SALUDO   (dinamica)
+//   0x04 PULSO    (dinamica)
+//   0x05 GIRO     (dinamica)  extra: -1 quedo en DORSO, +1 quedo en PALMA
+void onGesture(uint8_t code, uint8_t conf, int8_t extra) {
+  Serial.printf("GESTO %02X conf=%u extra=%d\n", code, conf, (int)extra);
+
+  switch (code) {
+    case 0x05:                         // GIRO: espejar el patron de la matriz
+      // Solo las dos primeras columnas: recorrer las cuatro intercambiaria
+      // cada par dos veces y la matriz quedaria igual que antes.
+      for (int fila = 0; fila < 4; fila++) {
+        for (int col = 0; col < 2; col++) {
+          int a = fila * 4 + col, b = fila * 4 + (3 - col);
+          uint8_t t = target[a]; target[a] = target[b]; target[b] = t;
+        }
+      }
+      break;
+    default:
+      break;                         // los demas patrones van aqui
+  }
 }
 
 void applyServos() {
@@ -98,7 +118,7 @@ void handleFrame(const uint8_t* f, int n) {
     case MSG_STOP:      memset(target, 0, 16); ack(seq); break;
     case MSG_HEARTBEAT: break;
     case MSG_MATRIX16:  if (len == 16) memcpy(target, p, 16); break;
-    case MSG_GESTURE:   if (len >= 3) { onGesture(p[0], p[1], p[2]); ack(seq); } break;
+    case MSG_GESTURE:   if (len >= 3) { onGesture(p[0], p[1], (int8_t)p[2]); ack(seq); } break;
     default: break;
   }
 }

@@ -130,12 +130,20 @@ class HandFeatures:
     center: np.ndarray = field(default_factory=lambda: np.zeros(3))
     scale: float = 1.0                   # tamano de palma EN PIXELES
     direction: np.ndarray = field(default_factory=lambda: np.zeros(3))
-    palm_facing: float = 1.0             # +1 palma, -1 dorso
+    palm_facing: float = 1.0             # +1 palma, -1 dorso (discreto)
+    palm_normal: float = 1.0             # [-1,+1] continuo; 0 = mano de canto
     timestamp_ms: int = 0
 
     @property
     def n_fingers_up(self) -> int:
         return sum(1 for v in self.fingers_up.values() if v)
+
+    @property
+    def orientacion(self) -> str:
+        """PALMA / DORSO / CANTO. CANTO es la zona donde el signo no es fiable."""
+        if abs(self.palm_normal) < 0.35:
+            return "CANTO"
+        return "PALMA" if self.palm_normal > 0 else "DORSO"
 
     @property
     def code(self) -> str:
@@ -177,6 +185,7 @@ def extract(
         center=G.centroid(points),
         scale=G.palm_size(points),
         direction=pointing_direction(points),
+        palm_normal=G.palm_normal_value(geo, handedness),
         palm_facing=G.palm_normal_sign(geo, handedness),
         timestamp_ms=timestamp_ms,
     )

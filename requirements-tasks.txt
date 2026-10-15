@@ -1,12 +1,17 @@
 # ============================================================
 # sOFIa - Eje Tecnico SC
-# Configuracion MODERNA: API de Tasks (HandLandmarker)
-# Funciona en Python 3.9 - 3.12. NO trae mp.solutions.
+# Configuracion ALTERNATIVA: API de Tasks (HandLandmarker)
 # ============================================================
+#
+# NO USAR EN MAC CON APPLE SILICON: mediapipe 1.0.x aborta el proceso
+# (DrishtiMetalHelper / "Service is unavailable"). Usa requirements.txt.
+#
+# Sirve en Windows y Linux, y es la unica opcion si necesitas deteccion de
+# cuerpo MULTI-PERSONA, porque mp.solutions.pose es de una sola persona.
 #
 #     pip install -r requirements-tasks.txt
 #     python app.py --backend tasks
 
 mediapipe>=1.0.1
 numpy>=1.26
-opencv-python==4.10.0.84
+opencv-contrib-python

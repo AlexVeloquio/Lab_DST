@@ -85,16 +85,37 @@ def to_canonical(pts: np.ndarray) -> np.ndarray:
     return (pts.astype(float) - origin) @ R.T / palm_size(pts)
 
 
+def palm_normal_value(pts: np.ndarray, handedness: str) -> float:
+    """
+    Medida CONTINUA de la orientacion de la palma, en [-1, +1]:
+
+        +1  palma totalmente de frente a la camara
+         0  mano de canto (el plano de la palma es perpendicular a la camara)
+        -1  dorso totalmente de frente
+
+    Es la componente z de la normal de la palma. La version continua importa
+    para el gesto GIRO: durante el volteo la mano pasa por el canto, donde la
+    normal es casi perpendicular al eje optico y su SIGNO se vuelve ruido puro
+    (oscila entre +1 y -1 de un frame a otro). Con el valor continuo se puede
+    exigir |v| alto para comprometerse a un estado y tratar la zona intermedia
+    como transicion, en lugar de creerle a un signo que esta brincando.
+
+    El factor de handedness corrige que el producto cruz invierte su signo
+    entre mano izquierda y derecha.
+    """
+    _, R = canonical_basis(pts)
+    v = -float(R[2][2])           # z de imagen crece alejandose de la camara
+    es_derecha = handedness.lower().startswith(("r", "d"))
+    return v if es_derecha else -v
+
+
 def palm_normal_sign(pts: np.ndarray, handedness: str) -> float:
     """
     +1 si vemos la PALMA hacia la camara, -1 si vemos el DORSO.
-    MediaPipe entrega z negativo hacia la camara; el producto cruz cambia de
-    signo segun la mano, por eso se corrige con handedness.
+    Version discreta de palm_normal_value(), conservada por compatibilidad.
     """
-    _, R = canonical_basis(pts)
-    z = R[2]
-    s = 1.0 if z[2] < 0 else -1.0
-    return s if handedness.lower().startswith(("r", "d")) else -s
+    v = palm_normal_value(pts, handedness)
+    return 1.0 if v >= 0 else -1.0
 
 
 def mirror_x(pts: np.ndarray) -> np.ndarray:
