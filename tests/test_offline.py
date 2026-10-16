@@ -394,6 +394,103 @@ def test_catalogo_coherente():
     print("  OK 5 posturas, codigos unicos, motor y protocolo sincronizados")
 
 
+def test_enlace_ping():
+    """
+    PING/PONG contra el simulador, en un socket real de loopback.
+    Verifica el eco exacto, la medicion de RTT y el rechazo de un PONG ajeno.
+    """
+    import socket as _sk
+    import struct as _st
+    import threading as _th
+    from core.protocol import SofiaLink
+
+    puerto = 4399
+    srv = _sk.socket(_sk.AF_INET, _sk.SOCK_DGRAM)
+    srv.setsockopt(_sk.SOL_SOCKET, _sk.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", puerto))
+    srv.settimeout(2.0)
+    recibidos = []
+
+    def servidor():
+        # 1er ping: responde con un eco EQUIVOCADO -> la PC debe ignorarlo
+        # 2o y 3er ping: responde correctamente
+        n = 0
+        while n < 3:
+            try:
+                data, origen = srv.recvfrom(256)
+            except _sk.timeout:
+                return
+            f = protocol.parse(data)
+            if f is None or f.type != protocol.MsgType.PING:
+                continue
+            n += 1
+            recibidos.append(f.payload)
+            carga = b"\x00\x00\x00\x00" if n == 1 else f.payload
+            srv.sendto(protocol.build(protocol.MsgType.PONG, n, carga), origen)
+
+    hilo = _th.Thread(target=servidor, daemon=True)
+    hilo.start()
+
+    link = SofiaLink("127.0.0.1", puerto, timeout=0.4)
+    malo = link.ping()
+    print(f"  ping con eco equivocado -> {malo} (debe ser None)")
+    assert malo is None, "acepto un PONG que no era su eco"
+
+    bueno = link.ping()
+    print(f"  ping con eco correcto   -> {bueno:.2f} ms")
+    assert bueno is not None and 0 <= bueno < 400
+
+    otro = link.ping()
+    assert otro is not None
+    # Cada ping debe llevar una marca distinta, o el eco no distingue nada
+    assert len(set(recibidos)) == len(recibidos), "marcas de ping repetidas"
+    print(f"  {len(recibidos)} pings, todas las marcas distintas")
+
+    link.close()
+    srv.close()
+    print("  OK PING/PONG y medicion de RTT")
+
+
+def test_reensamblado_ble():
+    """
+    FrameStream: recuperar tramas de un flujo partido.
+
+    BLE no respeta fronteras de mensaje como UDP: con el MTU por defecto de 23
+    solo caben 20 bytes utiles por notificacion, menos que una trama MATRIX16
+    de 24, asi que llegan partidas. Tambien pueden llegar dos tramas cortas
+    pegadas en una sola notificacion.
+    """
+    tramas = [protocol.build(protocol.MsgType.PING, i, bytes([i] * 4))
+              for i in range(5)]
+    tramas.append(protocol.build(protocol.MsgType.MATRIX16, 9, bytes(range(16))))
+    flujo = b"\x00\xff" + b"".join(tramas)      # con basura al inicio
+
+    # Trozos de 20 bytes: el peor caso real de BLE sin negociar MTU
+    fs = protocol.FrameStream()
+    got = []
+    for i in range(0, len(flujo), 20):
+        got += fs.feed(flujo[i:i + 20])
+    print(f"  en trozos de 20 B: {len(got)}/6 tramas")
+    assert len(got) == 6 and got[-1].type == protocol.MsgType.MATRIX16
+
+    # Byte a byte
+    fs2 = protocol.FrameStream()
+    got2 = []
+    for b in flujo:
+        got2 += fs2.feed(bytes([b]))
+    print(f"  byte a byte:       {len(got2)}/6 tramas")
+    assert len(got2) == 6
+
+    # Una trama corrupta en medio no debe arrastrar a las vecinas
+    mala = bytearray(protocol.build(protocol.MsgType.PING, 77, b"\x01\x02\x03\x04"))
+    mala[7] ^= 0xFF
+    fs3 = protocol.FrameStream()
+    got3 = fs3.feed(tramas[0] + bytes(mala) + tramas[1])
+    print(f"  con una corrupta:  seq recuperados {[f.seq for f in got3]}")
+    assert [f.seq for f in got3] == [0, 1]
+    print("  OK reensamblado de flujo")
+
+
 def test_protocolo():
     payload = to_bytes(ModuleMapper("dedos")([feats(OPEN)]))
     frame = protocol.build(protocol.MsgType.MATRIX16, 42, payload)
@@ -424,6 +521,8 @@ if __name__ == "__main__":
         ("Mapeo 16 modulos", test_mapeo),
         ("Suavizado", test_suavizado),
         ("Catalogo coherente", test_catalogo_coherente),
+        ("Enlace PING/PONG", test_enlace_ping),
+        ("Reensamblado BLE", test_reensamblado_ble),
         ("Protocolo", test_protocolo),
     ]
     for name, fn in tests:

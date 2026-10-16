@@ -27,8 +27,14 @@ static const uint32_t HEARTBEAT_TIMEOUT = 1500;   // ms sin PC -> reposo
 
 enum MsgType : uint8_t {
   MSG_HELLO = 0x01, MSG_ACK = 0x02, MSG_NACK = 0x03,
+  MSG_PING  = 0x04, MSG_PONG = 0x05,
   MSG_GESTURE = 0x10, MSG_MATRIX16 = 0x11,
   MSG_HEARTBEAT = 0x20, MSG_STATUS = 0x21, MSG_STOP = 0x40
+};
+
+enum ErrCode : uint8_t {
+  ERR_OK = 0x00, ERR_CRC = 0x01, ERR_TIPO = 0x02, ERR_LONGITUD = 0x03,
+  ERR_BUS = 0x04, ERR_ESCLAVO = 0x05, ERR_VERSION = 0x06, ERR_PAYLOAD = 0x07
 };
 
 WiFiUDP udp;
@@ -64,6 +70,11 @@ void sendFrame(uint8_t type, const uint8_t* payload, uint8_t len) {
 }
 
 void ack(uint8_t seq) { sendFrame(MSG_ACK, &seq, 1); }
+
+void nack(uint8_t seq, uint8_t err) {
+  uint8_t p[2] = { seq, err };
+  sendFrame(MSG_NACK, p, 2);
+}
 
 // Codigos de gesto. `extra` es un entero CON SIGNO (int8_t): la PC envia -1
 // como 0xFF, asi que hay que leerlo como int8_t y no como uint8_t.
@@ -113,13 +124,35 @@ void handleFrame(const uint8_t* f, int n) {
   lastRx = millis();
   const uint8_t* p = f + 6;
 
+  if (f[2] != VERSION) { nack(seq, ERR_VERSION); return; }
+
   switch (type) {
     case MSG_HELLO:     ack(seq); break;
+
+    // PING: se devuelve el payload EXACTO en un PONG. Devolver el eco, y no
+    // solo "algo", permite a la PC descartar respuestas viejas de un ping
+    // anterior y detectar si contesta otro dispositivo en el mismo puerto.
+    // No se toca ningun servo: es una prueba de enlace pura.
+    case MSG_PING:
+      sendFrame(MSG_PONG, p, len);
+      Serial.printf("PING seq=%u len=%u -> PONG\n", seq, len);
+      break;
     case MSG_STOP:      memset(target, 0, 16); ack(seq); break;
     case MSG_HEARTBEAT: break;
-    case MSG_MATRIX16:  if (len == 16) memcpy(target, p, 16); break;
-    case MSG_GESTURE:   if (len >= 3) { onGesture(p[0], p[1], (int8_t)p[2]); ack(seq); } break;
-    default: break;
+    case MSG_MATRIX16:
+      if (len == 16) memcpy(target, p, 16);
+      else nack(seq, ERR_LONGITUD);
+      break;                               // flujo de estado: sin ACK
+
+    case MSG_GESTURE:
+      if (len >= 3) { onGesture(p[0], p[1], (int8_t)p[2]); ack(seq); }
+      else nack(seq, ERR_LONGITUD);
+      break;
+
+    default:
+      nack(seq, ERR_TIPO);
+      Serial.printf("tipo desconocido 0x%02X -> NACK\n", type);
+      break;
   }
 }
 

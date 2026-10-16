@@ -140,6 +140,13 @@ este proyecto necesita:
 | Instalación en Windows | `pip install` | `pip install` | **compilar con CUDA** | manual |
 | Licencia | Apache 2.0 | **AGPL-3.0** | no comercial | Apache/BSD |
 
+**Alcance de este proyecto: solo manos.** El sistema no hace detección de cuerpo
+completo. Las cinco posturas se definen exclusivamente sobre los 21 puntos de la
+mano, porque viven en la articulación de los dedos y en la orientación de la
+palma — variables que ningún modelo corporal aporta. La consecuencia a
+documentar es que se pueden rastrear varias manos, pero no se sabe a qué persona
+pertenece cada una.
+
 **Conclusión para el Eje SC:** YOLO-pose **no detecta dedos**. Sus 17 keypoints
 COCO terminan en la muñeca. Si el proyecto exige "leer todos los componentes de
 la mano", YOLO queda descartado para esa tarea sin importar qué tan bueno sea
@@ -495,8 +502,13 @@ Teclas: `q` salir · `m` alternar mapeo · `i` ids de landmarks · `espacio` pau
 
 ```
 sofia_sc/
-├── app.py                  loop principal, hilos, teclado, métricas CSV
+├── gui.py                  INTERFAZ GRÁFICA: video, controles y enlace ESP32
+├── esp32_simulador.py      simulador de la ESP32: permite probar sin hardware
+├── ble_ping.py             escaneo y ping real por Bluetooth Low Energy
+├── app.py                  versión de consola con ventana de OpenCV
 ├── diagnostico.py          verifica entorno, cámara y lógica antes de correr
+├── evaluacion.py           sesión guiada de pruebas, orden aleatorizado
+├── metricas.py             analiza los CSV y genera las tablas del reporte
 ├── INSTALACION.md          paso a paso de instalación y pruebas
 ├── requirements.txt        configuración legacy (mp.solutions, Python 3.11)
 ├── requirements-tasks.txt  configuración moderna (mediapipe 1.x)
@@ -507,7 +519,8 @@ sofia_sc/
 │   ├── smoothing.py        One Euro, voto, histéresis, slew limiter [sin deps]
 │   ├── gestures.py         las 5 posturas + coordinador             [sin deps]
 │   ├── mapper.py           mano → 16 módulos, 2 estrategias         [sin deps]
-│   ├── protocol.py         trama, CRC16, cliente UDP                [sin deps]
+│   ├── protocol.py         trama, CRC16, reensamblado, cliente UDP  [sin deps]
+│   ├── ble_link.py         mismo protocolo sobre BLE (requiere bleak)
 │   └── tracker.py          MediaPipe, ambos backends (único que lo importa)
 ├── ui/overlay.py           dibujo OpenCV (reemplaza drawing_utils)
 ├── tests/test_offline.py   mano sintética, 7 pruebas, sin cámara

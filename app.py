@@ -194,10 +194,12 @@ def main() -> None:
     if args.metricas:
         csv_file = open(args.metricas, "w", newline="", encoding="utf-8")
         csv_writer = csv.writer(csv_file)
-        csv_writer.writerow(["t_ms", "fps", "manos", "gesto", "confianza", "latencia_ms"])
+        csv_writer.writerow(["t_ms", "fps", "fps_p5", "manos", "gesto",
+                             "confianza", "proceso_ms"])
 
     t_start = time.perf_counter()
-    fps_hist: deque[float] = deque(maxlen=30)
+    fps_hist: deque[float] = deque(maxlen=60)
+    t_frame_prev: float | None = None
     last_send = 0.0
     send_period = 1.0 / max(args.hz, 1.0)
     show_ids = paused = False
@@ -212,7 +214,16 @@ def main() -> None:
 
     try:
         while True:
+            # PERIODO REAL entre cuadros, no el tiempo de una parte del ciclo.
+            # Midiendo solo hasta antes de imshow/waitKey se excluian las dos
+            # operaciones mas caras y el contador reportaba cientos de FPS.
             loop_t0 = time.perf_counter()
+            if t_frame_prev is not None:
+                periodo = loop_t0 - t_frame_prev
+                if periodo > 1e-6:
+                    fps_hist.append(1.0 / periodo)
+            t_frame_prev = loop_t0
+
             frame = cam.read()
 
             if frame is None:
@@ -286,9 +297,10 @@ def main() -> None:
                 overlay.draw_palm_gauge(frame, hands[0])
             overlay.draw_matrix(frame, matrix)
 
-            dt = time.perf_counter() - loop_t0
-            fps_hist.append(1.0 / max(dt, 1e-6))
-            fps = float(np.mean(fps_hist))
+            dt = time.perf_counter() - loop_t0          # costo de procesamiento
+            fps = float(np.mean(fps_hist)) if fps_hist else 0.0
+            fps_p5 = (float(np.percentile(fps_hist, 5))
+                      if len(fps_hist) > 5 else fps)
 
             overlay.draw_hud(frame, fps, len(hands), len(poses), last_gesture,
                              bool(link and link.connected), mapper.strategy)
@@ -300,7 +312,7 @@ def main() -> None:
 
             if csv_writer:
                 csv_writer.writerow([
-                    ts_ms, f"{fps:.2f}", len(hands),
+                    ts_ms, f"{fps:.2f}", f"{fps_p5:.2f}", len(hands),
                     event.name if event else "",
                     f"{event.confidence:.3f}" if event else "",
                     f"{dt * 1000:.1f}",

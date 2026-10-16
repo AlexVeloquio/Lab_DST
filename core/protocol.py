@@ -48,6 +48,8 @@ class MsgType(IntEnum):
     HELLO = 0x01        # PC -> ESP32, descubrimiento / handshake
     ACK = 0x02          # ESP32 -> PC, payload = SEQ confirmado
     NACK = 0x03         # ESP32 -> PC, payload = SEQ + codigo de error
+    PING = 0x04         # PC -> ESP32, prueba de enlace; se mide el RTT
+    PONG = 0x05         # ESP32 -> PC, eco exacto del payload del PING
     GESTURE = 0x10      # PC -> ESP32, evento de postura (requiere ACK)
     MATRIX16 = 0x11     # PC -> ESP32, 16 bytes de nivel por modulo (sin ACK)
     HEARTBEAT = 0x20    # PC -> ESP32 cada 500 ms; su ausencia dispara failsafe
@@ -62,6 +64,8 @@ class ErrCode(IntEnum):
     LONGITUD_INVALIDA = 0x03
     BUS_OCUPADO = 0x04
     ESCLAVO_SIN_RESPUESTA = 0x05
+    VERSION_INCOMPATIBLE = 0x06
+    PAYLOAD_INVALIDO = 0x07
 
 
 # Codigos de gesto que viajan en el payload de GESTURE.
@@ -136,6 +140,64 @@ def parse(data: bytes) -> Frame | None:
     return Frame(ver, typ, seq, data[i + HEADER_LEN:end])
 
 
+class FrameStream:
+    """
+    Extrae tramas completas de un flujo de bytes que puede venir partido.
+
+    UDP entrega un datagrama entero por trama, asi que ahi `parse()` basta.
+    BLE no: una notificacion cabe en MTU menos 3 bytes, y con el MTU por
+    defecto de 23 eso son 20 bytes, menos que una trama MATRIX16 de 24. Las
+    tramas llegan partidas en dos notificaciones, o dos tramas cortas llegan
+    pegadas en una sola.
+
+    Esta clase acumula lo que llega y devuelve las tramas que ya esten
+    completas. Aprovecha el doble byte de sincronia para descartar basura
+    inicial y recuperarse si se pierde un fragmento.
+    """
+
+    MAX_BUFFER = 4096
+
+    def __init__(self) -> None:
+        self.buf = bytearray()
+
+    def feed(self, data: bytes) -> list[Frame]:
+        self.buf.extend(data)
+        tramas: list[Frame] = []
+
+        while True:
+            i = self.buf.find(SYNC)
+            if i < 0:
+                # Conservar el ultimo byte: puede ser la mitad de un SYNC
+                self.buf = self.buf[-1:] if self.buf else bytearray()
+                break
+            if i:
+                del self.buf[:i]                    # descartar basura previa
+            if len(self.buf) < HEADER_LEN + CRC_LEN:
+                break
+
+            ln = self.buf[5]
+            if ln > MAX_PAYLOAD:
+                del self.buf[:2]                    # sincronia falsa
+                continue
+            total = HEADER_LEN + ln + CRC_LEN
+            if len(self.buf) < total:
+                break                               # falta cola, esperar
+
+            f = parse(bytes(self.buf[:total]))
+            if f is None:
+                del self.buf[:2]                    # CRC malo: resincronizar
+                continue
+            tramas.append(f)
+            del self.buf[:total]
+
+        if len(self.buf) > self.MAX_BUFFER:
+            self.buf = self.buf[-self.MAX_BUFFER:]
+        return tramas
+
+    def reset(self) -> None:
+        self.buf.clear()
+
+
 class SofiaLink:
     """
     Cliente UDP hacia la ESP32 Maestra.
@@ -194,6 +256,50 @@ class SofiaLink:
     def hello(self) -> bool:
         self.connected = self.send_reliable(MsgType.HELLO, b"SOFIA-SC")
         return self.connected
+
+    def ping(self, timeout: float | None = None) -> float | None:
+        """
+        Prueba de enlace. Devuelve el RTT en milisegundos, o None si no hubo
+        respuesta.
+
+        El payload lleva 4 bytes con una marca de tiempo en microsegundos, y
+        la ESP32 debe
+        devolverlos EXACTOS en un PONG. Comparar el eco, y no solo recibir
+        algo, descarta dos fallas que de otro modo pasan por buenas: una
+        respuesta vieja que llega tarde (de un ping anterior) y un dispositivo
+        distinto contestando en el mismo puerto.
+
+        El RTT se mide en la PC con un reloj monotono, asi que no depende de
+        que los relojes de ambos extremos esten sincronizados.
+        """
+        t_out = self.timeout if timeout is None else timeout
+        seq = self._next_seq()
+        marca = int(time.perf_counter() * 1e6) & 0xFFFFFFFF
+        payload = struct.pack("<I", marca)
+        frame = build(MsgType.PING, seq, payload)
+
+        anterior = self._sock.gettimeout()
+        self._sock.settimeout(t_out)
+        t0 = time.perf_counter()
+        try:
+            self._sock.sendto(frame, self.addr)
+            # Puede llegar trafico de otro tipo primero (STATUS, ACK viejo):
+            # se descarta hasta encontrar el PONG con nuestro eco, o agotar.
+            while (time.perf_counter() - t0) < t_out:
+                data, _ = self._sock.recvfrom(256)
+                f = parse(data)
+                if f and f.type == MsgType.PONG and f.payload == payload:
+                    rtt = (time.perf_counter() - t0) * 1000.0
+                    self.connected = True
+                    self.last_rx_ms = int(time.time() * 1000)
+                    return rtt
+        except (socket.timeout, OSError):
+            pass
+        finally:
+            self._sock.settimeout(anterior)
+
+        self.connected = False
+        return None
 
     def send_matrix(self, matrix_bytes: bytes) -> None:
         if len(matrix_bytes) != 16:

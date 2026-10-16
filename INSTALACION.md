@@ -134,7 +134,44 @@ en la lógica aunque no tengas el hardware a la mano.
 
 ---
 
-## Paso 6 — Primera corrida con cámara
+## Paso 6 — La interfaz gráfica
+
+La GUI es ahora el punto de entrada del proyecto:
+
+```bash
+python gui.py
+```
+
+Ventana con el video en vivo, el esqueleto, la postura detectada, las barras
+de extensión por dedo, la previsualización de los 16 módulos y el panel de la
+ESP32. Tres botones controlan el procesamiento:
+
+| Botón | Qué le hace al hilo |
+|---|---|
+| **Iniciar** | Levanta el procesamiento y reinicia los detectores |
+| **Detener** | El hilo se bloquea en una espera pasiva; no consume CPU |
+| **Reanudar** | Continúa y limpia las ventanas temporales de los gestos dinámicos |
+
+Tkinter viene en la biblioteca estándar, así que no hay nada que instalar. En
+Linux, si falta, es `sudo apt install python3-tk`.
+
+### Probar el enlace sin la ESP32
+
+En una terminal levanta el simulador y en otra la GUI:
+
+```bash
+python esp32_simulador.py          # terminal 1
+python gui.py --host 127.0.0.1     # terminal 2
+```
+
+Pulsa **Conectar** y luego **Ping**. Debe mostrar `RTT: 0.1 ms (5/5)`. El
+simulador habla exactamente el mismo protocolo que el firmware, así que cuando
+tengas la ESP32 real solo cambias `--host` por su IP.
+
+Para probar la robustez con un enlace malo: `python esp32_simulador.py
+--perdida 0.3` descarta el 30 % de las respuestas.
+
+## Paso 6b — Corrida con la ventana de OpenCV
 
 ```bash
 python app.py
@@ -220,6 +257,26 @@ Presiona `m` para alternar y observa la matriz 4×4 de la esquina:
 
 ## Paso 9 — Conectar la ESP32 (cuando esté lista)
 
+El proyecto soporta **dos transportes** con el mismo protocolo: WiFi/UDP y
+Bluetooth Low Energy. La trama es idéntica en ambos; solo cambia el medio.
+
+### Opción A — Bluetooth Low Energy
+
+```bash
+pip install bleak
+python ble_ping.py --escanear     # ver qué hay cerca
+python ble_ping.py                # conectar y hacer ping real
+python gui.py --transporte ble    # la GUI por BLE
+```
+
+Sube `firmware/esp32_master_ble/` y necesitarás la librería **NimBLE-Arduino**.
+La placa se anuncia como `sOFIa-Maestra`.
+
+En macOS hay que dar permiso de Bluetooth a la terminal en *Ajustes →
+Privacidad y seguridad → Bluetooth*, o el escaneo devuelve siempre vacío.
+
+### Opción B — WiFi / UDP
+
 1. Abre `firmware/esp32_master/esp32_master.ino` en Arduino IDE.
 2. Cambia `SSID` y `PASS` por los de tu red (o configura la ESP32 como AP).
 3. Instala la librería **Adafruit PWM Servo Driver** desde el gestor de
@@ -242,6 +299,25 @@ reposo por su cuenta. Y `app.py` envía `STOP` explícito al cerrar.
 ---
 
 ## Paso 10 — Registrar métricas para el reporte
+
+Lo más cómodo es la sesión guiada, que anuncia posturas en orden aleatorio y
+anota qué pidió contra qué detectó:
+
+```bash
+python evaluacion.py --usuario U1 --iluminacion laboratorio --distancia 2.0 --repeticiones 20
+python evaluacion.py --usuario U1 --reposo 3        # mide falsos positivos
+python metricas.py "resultados/*.csv" --salida resultados/metricas.md
+```
+
+`metricas.py` produce las tablas en Markdown listas para pegar en el documento:
+tasa de acierto por postura y usuario, por condición de captura, matriz de
+confusión, tiempo de respuesta, FPS y falsos positivos.
+
+El orden aleatorio no es un capricho: repetir veinte veces la misma postura
+infla la tasa de acierto porque te calibras contra el detector, y además impide
+medir confusiones entre posturas.
+
+### Registro crudo durante el uso normal
 
 ```bash
 python app.py --metricas resultados/pruebas_s6.csv

@@ -37,3 +37,8 @@ numpy<2
 # numpy<2 tampoco es opcional: el wheel de 0.10.21 declara "Requires-Dist:
 # numpy<2". Con numpy 2.x la importacion truena con errores de ABI.
 # ------------------------------------------------------------
+
+# --- Transporte BLE (opcional) ---------------------------------------
+# Solo si la ESP32 se comunica por Bluetooth Low Energy en vez de WiFi.
+# El protocolo es el mismo; cambia unicamente el medio.
+#   bleak
